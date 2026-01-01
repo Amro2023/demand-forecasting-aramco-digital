@@ -1,29 +1,57 @@
+import os
 import pandas as pd
-from pathlib import Path
+from joblib import dump
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error
-import joblib
 
-DATA_PATH = Path("data/processed/processed_sales.csv")
-MODEL_PATH = Path("models/demand_model.pkl")
+PROCESSED_PATH = os.path.join("data", "processed", "processed.csv")
+MODEL_DIR = "models"
+MODEL_PATH = os.path.join(MODEL_DIR, "model.joblib")
 
-def train():
-    df = pd.read_csv(DATA_PATH)
+FEATURES = [
+    "dow", "week", "month", "year",
+    "lag_1", "lag_7", "lag_14", "lag_28",
+    "roll_7", "roll_28"
+]
 
-    X = df[["lag_1", "lag_7", "rolling_7"]]
-    y = df["sales"]
+def time_split(df: pd.DataFrame, test_days: int = 28):
+    # last N days as test
+    df = df.sort_values("date")
+    cutoff = df["date"].max() - pd.Timedelta(days=test_days)
+    train = df[df["date"] <= cutoff].copy()
+    test = df[df["date"] > cutoff].copy()
+    return train, test
 
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
+def main():
+    if not os.path.exists(PROCESSED_PATH):
+        raise FileNotFoundError("Run preprocess first: python src/preprocess.py")
 
-    preds = model.predict(X)
-    mae = mean_absolute_error(y, preds)
-    print(f"Training MAE: {mae:.2f}")
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    df = pd.read_csv(PROCESSED_PATH, parse_dates=["date"])
 
-    MODEL_PATH.parent.mkdir(exist_ok=True)
-    joblib.dump(model, MODEL_PATH)
-    print(f"Model saved to {MODEL_PATH}")
+    # Simple baseline: train one global model across all store/item rows
+    train_df, test_df = time_split(df, test_days=28)
+
+    X_train = train_df[FEATURES]
+    y_train = train_df["demand"]
+    X_test = test_df[FEATURES]
+    y_test = test_df["demand"]
+
+    model = RandomForestRegressor(
+        n_estimators=400,
+        random_state=42,
+        n_jobs=-1,
+        min_samples_leaf=2
+    )
+    model.fit(X_train, y_train)
+
+    preds = model.predict(X_test)
+    mae = mean_absolute_error(y_test, preds)
+
+    dump(model, MODEL_PATH)
+    print(f"✅ Model saved: {MODEL_PATH}")
+    print(f"📉 Holdout MAE (last 28 days): {mae:.3f}")
+    print(f"Train rows: {len(train_df):,} | Test rows: {len(test_df):,}")
 
 if __name__ == "__main__":
-    train()
-
+    main()
