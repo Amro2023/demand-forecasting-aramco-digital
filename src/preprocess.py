@@ -1,6 +1,5 @@
 
 ## 3) `src/preprocess.py`
-```python
 import os
 import glob
 import pandas as pd
